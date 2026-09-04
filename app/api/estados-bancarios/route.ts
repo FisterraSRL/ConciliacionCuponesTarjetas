@@ -44,13 +44,20 @@ export async function GET() {
     const estados = rows
       .filter((item) => (item?.activo ?? item?.Activo) !== false)
       .map((item) => {
-        const nombre = String(item.nombre ?? item.Nombre ?? '').trim();
+        const nombre = String(item.nombre ?? item.Nombre ?? item.NOMBRE ?? '').trim();
+        const codigoConocido = nombre.localeCompare('Cupón Tarjeta a Cancelar', 'es', { sensitivity: 'base' }) === 0
+          ? 'CUACAN'
+          : '';
+        const codigo = String(item.codigo ?? item.Codigo ?? item.CODIGO ?? '').trim() || codigoConocido;
         return {
-          estadoId: String(item.estadoId ?? item.EstadoID ?? '').trim(),
-          codigo: String(item.codigo ?? item.Codigo ?? nombre).trim(),
+          estadoId: String(item.estadoId ?? item.EstadoID ?? item.ESTADOID ?? '').trim(),
+          codigo,
           nombre,
         };
       })
+      // El listado de ESTADOBANCARIO devuelve EstadoID y Nombre, pero no siempre
+      // devuelve Codigo. No exponemos el nombre como value porque el reporte
+      // ApiSituacionCheques exige el código de la entidad.
       .filter((item) => item.codigo && item.nombre);
     estados.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
     return NextResponse.json({ estados });

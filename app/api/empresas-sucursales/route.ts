@@ -43,7 +43,10 @@ export async function GET() {
     if (!Array.isArray(rows)) throw new Error('La API devolvió un formato inesperado.');
     const empresasSucursales = rows
       .filter((item) => (item?.activo ?? item?.Activo) !== false)
-      .map((item) => ({ codigo: String(item.codigo ?? item.Codigo ?? ''), nombre: String(item.nombre ?? item.Nombre ?? '') }))
+      .map((item) => ({
+        codigo: String(item.codigo ?? item.Codigo ?? item.CODIGO ?? '').trim(),
+        nombre: String(item.nombre ?? item.Nombre ?? item.NOMBRE ?? '').trim(),
+      }))
       .filter((item) => item.codigo && item.nombre)
       .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
     return NextResponse.json({ empresasSucursales });
