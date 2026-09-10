@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 type MovimientoDocument = {
   documentoFisicoId?: unknown;
+  descripcion?: unknown;
   referencia?: unknown;
   importe?: unknown;
   cuentaOrigen?: unknown;
@@ -85,12 +86,13 @@ export async function POST(request: NextRequest) {
     }
     const documents = body.documentos.map((item) => ({
       documentoFisicoId: Number(item.documentoFisicoId),
+      descripcion: String(item.descripcion ?? '').trim(),
       referencia: String(item.referencia ?? '').trim(),
       importe: amount(item.importe),
       cuentaOrigen: String(item.cuentaOrigen ?? '').trim(),
       fechaVencimiento: normalizeDate(item.fechaVencimiento),
     }));
-    if (documents.some((item) => !Number.isFinite(item.documentoFisicoId) || !item.referencia || !Number.isFinite(item.importe) || item.importe <= 0 || !item.cuentaOrigen)) {
+    if (documents.some((item) => !Number.isFinite(item.documentoFisicoId) || !item.descripcion || !item.referencia || !Number.isFinite(item.importe) || item.importe <= 0 || !item.cuentaOrigen)) {
       return NextResponse.json({ error: 'Uno o más documentos contienen datos inválidos.' }, { status: 400 });
     }
     const asientoItems = documents.flatMap((item) => [
@@ -110,7 +112,7 @@ export async function POST(request: NextRequest) {
     const payload = {
       TransaccionSubtipoID: tipoDocumento,
       TransaccionTipoID: tipoDocumento,
-      Descripcion: String(body.descripcion ?? `Conciliación Excel - ${operacionId}`).trim(),
+      Descripcion: String(body.descripcion ?? documents[0].descripcion).trim(),
       Firmada: false,
       EmpresaID: empresaId,
       TalonarioID: null,

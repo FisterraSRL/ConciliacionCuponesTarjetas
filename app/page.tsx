@@ -10,7 +10,7 @@ type EstadoBancario = { codigo: string; nombre: string };
 type OperacionBancaria = { codigo: string; nombre: string; estadoOrigen: string | null; estadoDestino: string | null };
 type CuentaDestino = { codigo: string; nombre: string };
 type EmpresaSucursal = { codigo: string; nombre: string };
-type AsientoPreview = { tipoDocumento: string; operacion: string; operacionId: string; empresaId: string; estadoOrigen: string; estadoDestino: string; cuentaDestino: string; cuentaDestinoId: string; documentos: Array<{ documentoFisicoId: string; referencia: string; importe: Cell; cuentaOrigen: string; fechaVencimiento: string | null }> };
+type AsientoPreview = { tipoDocumento: string; fecha: string; descripcion: string; operacion: string; operacionId: string; empresaId: string; estadoOrigen: string; estadoDestino: string; cuentaDestino: string; cuentaDestinoId: string; documentos: Array<{ documentoFisicoId: string; descripcion: string; referencia: string; importe: Cell; cuentaOrigen: string; fechaVencimiento: string | null }> };
 type ApiError = { error?: string };
 const expectedColumns = ['Descripcion', 'Fecha', 'Referencia', 'Importe'];
 
@@ -51,6 +51,7 @@ function accountDisplayName(accounts: CuentaDestino[], value: unknown) {
 
 export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const cuentaDestinoRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
   const [fileName, setFileName] = useState('');
@@ -67,6 +68,8 @@ export default function Home() {
   const [tipoCheque, setTipoCheque] = useState('0');
   const [estadoBancario, setEstadoBancario] = useState('CUACAN');
   const [cuentaContable, setCuentaContable] = useState('');
+  const [cuentaContableBusqueda, setCuentaContableBusqueda] = useState('');
+  const [cuentaContableAbierta, setCuentaContableAbierta] = useState(false);
   const [empresa, setEmpresa] = useState('049CDS');
   const [empresasSucursales, setEmpresasSucursales] = useState<EmpresaSucursal[]>([]);
   const [estadosBancarios, setEstadosBancarios] = useState<EstadoBancario[]>([]);
@@ -76,7 +79,10 @@ export default function Home() {
   const [operacionBancaria, setOperacionBancaria] = useState('');
   const [cuentasDestino, setCuentasDestino] = useState<CuentaDestino[]>([]);
   const [cuentaDestino, setCuentaDestino] = useState('');
+  const [cuentaDestinoBusqueda, setCuentaDestinoBusqueda] = useState('');
+  const [cuentaDestinoAbierta, setCuentaDestinoAbierta] = useState(false);
   const [tipoDocumento, setTipoDocumento] = useState('MOVFONDOS');
+  const [fechaContabilizacion, setFechaContabilizacion] = useState(todayInBuenosAires);
   const [movementMessage, setMovementMessage] = useState('');
   const [asientoPreview, setAsientoPreview] = useState<AsientoPreview | null>(null);
   const [movementLoading, setMovementLoading] = useState(false);
@@ -85,6 +91,28 @@ export default function Home() {
   const [movementJson, setMovementJson] = useState<unknown>(null);
   const [endpointResponse, setEndpointResponse] = useState<unknown>(null);
   const [endpointResponseOk, setEndpointResponseOk] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    function closeDestinationAccounts(event: PointerEvent) {
+      if (!cuentaDestinoRef.current?.contains(event.target as Node)) setCuentaDestinoAbierta(false);
+    }
+    document.addEventListener('pointerdown', closeDestinationAccounts);
+    return () => document.removeEventListener('pointerdown', closeDestinationAccounts);
+  }, []);
+
+  useEffect(() => {
+    const destinationBySource: Record<string, string> = {
+      '122011': '122211',
+      '122012': '122212',
+      '122020': '122220',
+    };
+    const destinationCode = destinationBySource[cuentaContable];
+    if (!destinationCode) return;
+    const destination = cuentasDestino.find((account) => account.codigo === destinationCode);
+    if (!destination) return;
+    setCuentaDestino(destination.codigo);
+    setCuentaDestinoBusqueda(`${destination.codigo} — ${destination.nombre}`);
+  }, [cuentaContable, cuentasDestino]);
 
   useEffect(() => {
     fetch('/api/estados-bancarios')
@@ -109,7 +137,10 @@ export default function Home() {
       .then(async (response) => { const body = await readJson<{ cuentas: CuentaDestino[] }>(response); if (!response.ok) throw new Error(body.error); return body; })
       .then((body) => {
         setCuentasDestino(body.cuentas);
-        if (body.cuentas.length) setCuentaDestino(body.cuentas[0].codigo);
+        if (body.cuentas.length) {
+          setCuentaDestino(body.cuentas[0].codigo);
+          setCuentaDestinoBusqueda(`${body.cuentas[0].codigo} — ${body.cuentas[0].nombre}`);
+        }
         if (cuentaContable && !body.cuentas.some((item: CuentaDestino) => item.codigo === cuentaContable)) setCuentaContable('');
       })
       .catch(() => setError('No se pudieron cargar las cuentas destino.'));
@@ -162,6 +193,24 @@ export default function Home() {
     const amount = typeof raw === 'number' ? raw : Number(String(raw ?? '').replace(/[^0-9,.-]/g, '').replace(',', '.'));
     return sum + (Number.isFinite(amount) ? amount : 0);
   }, 0), [rows]);
+
+  const cuentasContablesFiltradas = useMemo(() => {
+    const search = cuentaContableBusqueda.trim().toLocaleLowerCase('es');
+    if (!search || cuentaContable) return cuentasDestino;
+    return cuentasDestino.filter((cuenta) =>
+      cuenta.codigo.toLocaleLowerCase('es').includes(search) ||
+      cuenta.nombre.toLocaleLowerCase('es').includes(search)
+    );
+  }, [cuentaContableBusqueda, cuentaContable, cuentasDestino]);
+
+  const cuentasDestinoFiltradas = useMemo(() => {
+    const search = cuentaDestinoBusqueda.trim().toLocaleLowerCase('es');
+    if (!search || cuentaDestino) return cuentasDestino;
+    return cuentasDestino.filter((cuenta) =>
+      cuenta.codigo.toLocaleLowerCase('es').includes(search) ||
+      cuenta.nombre.toLocaleLowerCase('es').includes(search)
+    );
+  }, [cuentaDestinoBusqueda, cuentaDestino, cuentasDestino]);
 
   async function importFile(file?: File) {
     if (!file) return;
@@ -219,6 +268,7 @@ export default function Home() {
     const selectedOperation = operacionesBancarias.find((item) => item.codigo === operacionBancaria);
     if (!selectedOperation) { setMovementMessage('Seleccioná una operación bancaria.'); return; }
     if (!tipoDocumento.trim()) { setMovementMessage('Ingresá el código del tipo de documento.'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaContabilizacion)) { setMovementMessage('Ingresá una fecha de contabilización válida.'); return; }
     if (!empresa) { setMovementMessage('Seleccioná una empresa / sucursal antes de crear el movimiento.'); return; }
     setMovementLoading(true);
     try {
@@ -235,6 +285,7 @@ export default function Home() {
       if (!destination) { setMovementMessage('Seleccioná una cuenta destino.'); return; }
       const documents = selectedMatches.map((item) => ({
         documentoFisicoId: String(item.cheque?.documentoFisicoId ?? ''),
+        descripcion: String(rows[item.index]?.Descripcion ?? '').trim(),
         referencia: String(rows[item.index]?.Referencia ?? ''),
         importe: rows[item.index]?.Importe ?? null,
         cuentaOrigen: (() => {
@@ -249,11 +300,12 @@ export default function Home() {
         fechaVencimiento: item.cheque?.fechaVencimiento ? String(item.cheque.fechaVencimiento) : null,
       }));
       if (documents.some((item) => !item.documentoFisicoId)) { setMovementMessage('Finnegans no devolvió el documentofisicoID de uno o más cheques seleccionados.'); return; }
+      if (documents.some((item) => !item.descripcion)) { setMovementMessage('Uno o más registros seleccionados no tienen descripción en el Excel.'); return; }
       if (documents.some((item) => !item.cuentaOrigen)) { setMovementMessage('No se encontró el código de la cuenta origen de uno o más cheques en el listado de cuentas de Finnegans.'); return; }
-      const preview = { tipoDocumento: tipoDocumento.trim(), operacion: operation.nombre, operacionId: operation.codigo, empresaId: empresa, estadoOrigen: operation.estadoOrigen, estadoDestino: operation.estadoDestino, cuentaDestino: destination.nombre, cuentaDestinoId: destination.codigo, documentos: documents };
+      const preview = { tipoDocumento: tipoDocumento.trim(), fecha: fechaContabilizacion, descripcion: documents[0].descripcion, operacion: operation.nombre, operacionId: operation.codigo, empresaId: empresa, estadoOrigen: operation.estadoOrigen, estadoDestino: operation.estadoDestino, cuentaDestino: destination.nombre, cuentaDestinoId: destination.codigo, documentos: documents };
       const previewResponse = await fetch('/api/movimientos-fondos', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...preview, fecha: todayInBuenosAires(), descripcion: `${preview.operacion} - Conciliación Excel`, previewOnly: true }),
+        body: JSON.stringify({ ...preview, previewOnly: true }),
       });
       const previewBody = await readJson<{ payload: unknown }>(previewResponse);
       if (!previewResponse.ok) throw new Error(previewBody.error);
@@ -268,6 +320,15 @@ export default function Home() {
 
   async function submitMovement() {
     if (!asientoPreview || movementSending) return;
+    const documents = asientoPreview.documentos.map((item) => ({
+      ...item,
+      descripcion: String(item.descripcion || rows.find((row) => String(row.Referencia ?? '') === item.referencia)?.Descripcion || '').trim(),
+    }));
+    const descripcion = String(asientoPreview.descripcion || documents[0]?.descripcion || '').trim();
+    if (!descripcion || documents.some((item) => !item.descripcion)) {
+      setMovementMessage('No se pudo recuperar la descripción del Excel. Volvé a crear la vista previa del movimiento.');
+      return;
+    }
     if (!window.confirm(`Se creará un movimiento ${asientoPreview.tipoDocumento} con ${asientoPreview.documentos.length} documentos en Finnegans. ¿Confirmar?`)) return;
     setMovementSending(true); setMovementMessage(''); setMovementSuccess('');
     setEndpointResponse(null); setEndpointResponseOk(null);
@@ -275,7 +336,7 @@ export default function Home() {
     try {
       const response = await fetch('/api/movimientos-fondos', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...asientoPreview, fecha: todayInBuenosAires(), descripcion: `${asientoPreview.operacion} - Conciliación Excel`, documentos: asientoPreview.documentos }),
+        body: JSON.stringify({ ...asientoPreview, descripcion, documentos: documents }),
       });
       const body = await readJson<{ result?: Record<string, unknown> }>(response);
       receivedResponse = true;
@@ -297,13 +358,13 @@ export default function Home() {
           <div>
             <div className="flex flex-wrap items-center gap-2.5">
               <h2 className="text-[21px] font-medium text-[#3f4650]">Conciliación por Excel - Situación de Cheques</h2>
-              <span className="rounded-full border border-[#dcdffc] bg-[#f0effa] px-2.5 py-1 font-mono text-[11px] font-semibold text-[#1529a0]" title="Versión publicada">v{packageJson.version}</span>
             </div>
             <p className="mt-1 text-sm text-[#747b84]">Importación y conciliación de documentos físicos</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <a href="/plantilla-importacion.xlsx" download="Plantilla importacion conciliacion.xlsx" className="inline-flex items-center gap-2 rounded-lg border border-[#3985ff] bg-white px-3.5 py-2 text-xs font-semibold text-[#2675df] transition hover:bg-[#eef5ff]" aria-label="Descargar plantilla Excel vacía"><span aria-hidden="true">↓</span> Descargar plantilla Excel</a>
             <div className={`rounded-sm border px-3 py-1.5 text-xs font-medium ${apiStatus === 'ready' ? 'border-[#aee9d0] bg-[#effcf7] text-[#169568]' : apiStatus === 'error' ? 'border-[#f1c6c6] bg-[#fff4f4] text-[#d34a4a]' : 'border-[#b9dfff] bg-[#f1f8ff] text-[#168df5]'}`}>{apiStatus === 'ready' ? `Finnegans listo · ${apiCount.toLocaleString('es-AR')} cheques` : apiStatus === 'error' ? 'Finnegans no disponible' : 'Consultando Finnegans…'}</div>
+            <span className="rounded-full border border-[#dcdffc] bg-[#f0effa] px-2.5 py-1 font-mono text-[11px] font-semibold text-[#1529a0]" title="Versión publicada">v{packageJson.version}</span>
           </div>
         </div>
 
@@ -313,7 +374,7 @@ export default function Home() {
             <label className="block"><span className="mb-1.5 block text-xs font-semibold text-[#49505b]">Fecha hasta</span><input type="date" value={fechaHasta} onChange={(event) => setFechaHasta(event.target.value)} className="w-full rounded-lg border border-[#cdcfd2] bg-white px-3 py-2.5 text-sm text-[#04102d] outline-none transition focus:border-[#3985ff] focus:ring-2 focus:ring-[#3985ff]/15"/></label>
             <label className="block"><span className="mb-1.5 block text-xs font-semibold text-[#49505b]">Tipo de cheque</span><select value={tipoCheque} onChange={(event) => setTipoCheque(event.target.value)} className="w-full rounded-lg border border-[#cdcfd2] bg-white px-3 py-2.5 text-sm text-[#04102d] outline-none transition focus:border-[#3985ff] focus:ring-2 focus:ring-[#3985ff]/15"><option value="0">Propio</option><option value="1">Tercero</option></select></label>
             <label className="block"><span className="mb-1.5 block text-xs font-semibold text-[#49505b]">Estado bancario</span><select value={estadoBancario} onChange={(event) => setEstadoBancario(event.target.value)} disabled={!estadosBancarios.length} className="w-full rounded-lg border border-[#cdcfd2] bg-white px-3 py-2.5 text-sm text-[#04102d] outline-none transition focus:border-[#3985ff] focus:ring-2 focus:ring-[#3985ff]/15 disabled:bg-[#f8f8f9] disabled:text-[#898e95]">{estadosBancarios.length ? estadosBancarios.map((estado) => <option key={estado.codigo} value={estado.codigo}>{estado.nombre}</option>) : <option>Cargando estados…</option>}</select></label>
-            <label className="block"><span className="mb-1.5 block text-xs font-semibold text-[#49505b]">Cuenta contable</span><select value={cuentaContable} onChange={(event) => setCuentaContable(event.target.value)} disabled={!cuentasDestino.length} className="w-full rounded-lg border border-[#cdcfd2] bg-white px-3 py-2.5 text-sm text-[#04102d] outline-none transition focus:border-[#3985ff] focus:ring-2 focus:ring-[#3985ff]/15 disabled:bg-[#f8f8f9] disabled:text-[#898e95]"><option value="">Todas las cuentas</option>{cuentasDestino.map((cuenta) => <option key={cuenta.codigo} value={cuenta.codigo}>{cuenta.codigo} — {cuenta.nombre}</option>)}</select></label>
+            <div className="relative block"><span className="mb-1.5 block text-xs font-semibold text-[#49505b]">Cuenta contable</span><div className="relative"><input type="text" role="combobox" aria-expanded={cuentaContableAbierta} aria-controls="cuentas-contables-lista" aria-autocomplete="list" value={cuentaContableBusqueda} placeholder="Todas las cuentas" disabled={!cuentasDestino.length} onFocus={() => setCuentaContableAbierta(true)} onBlur={() => window.setTimeout(() => setCuentaContableAbierta(false), 150)} onChange={(event) => { setCuentaContableBusqueda(event.target.value); setCuentaContable(''); setCuentaContableAbierta(true); }} className="w-full rounded-lg border border-[#cdcfd2] bg-white py-2.5 pl-3 pr-9 text-sm text-[#04102d] outline-none transition placeholder:text-[#04102d] focus:border-[#3985ff] focus:ring-2 focus:ring-[#3985ff]/15 disabled:bg-[#f8f8f9] disabled:text-[#898e95]"/><button type="button" tabIndex={-1} aria-label="Abrir lista de cuentas contables" disabled={!cuentasDestino.length} onMouseDown={(event) => event.preventDefault()} onClick={() => setCuentaContableAbierta((value) => !value)} className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-[#747b84] disabled:opacity-40">⌄</button></div>{cuentaContableAbierta && <div id="cuentas-contables-lista" role="listbox" className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-[#cdcfd2] bg-white py-1 shadow-lg"><button type="button" role="option" aria-selected={!cuentaContable} onMouseDown={(event) => event.preventDefault()} onClick={() => { setCuentaContable(''); setCuentaContableBusqueda(''); setCuentaContableAbierta(false); }} className="block w-full px-3 py-2 text-left text-sm text-[#49505b] hover:bg-[#eef5ff]">Todas las cuentas</button>{cuentasContablesFiltradas.map((cuenta) => <button key={cuenta.codigo} type="button" role="option" aria-selected={cuenta.codigo === cuentaContable} onMouseDown={(event) => event.preventDefault()} onClick={() => { setCuentaContable(cuenta.codigo); setCuentaContableBusqueda(`${cuenta.codigo} — ${cuenta.nombre}`); setCuentaContableAbierta(false); }} className={`block w-full px-3 py-2 text-left text-sm hover:bg-[#eef5ff] ${cuenta.codigo === cuentaContable ? 'bg-[#eef5ff] font-semibold text-[#0847ae]' : 'text-[#04102d]'}`}><span className="font-mono text-xs text-[#0847ae]">{cuenta.codigo}</span><span> — {cuenta.nombre}</span></button>)}{!cuentasContablesFiltradas.length && <p className="px-3 py-3 text-sm text-[#898e95]">No se encontraron cuentas.</p>}</div>}</div>
             <label className="block"><span className="mb-1.5 block text-xs font-semibold text-[#49505b]">Empresa / sucursal</span><select value={empresa} onChange={(event) => setEmpresa(event.target.value)} disabled={!empresasSucursales.length} className="w-full rounded-lg border border-[#cdcfd2] bg-white px-3 py-2.5 text-sm text-[#04102d] outline-none transition focus:border-[#3985ff] focus:ring-2 focus:ring-[#3985ff]/15 disabled:bg-[#f8f8f9] disabled:text-[#898e95]"><option value="">Todas las empresas y sucursales</option>{empresasSucursales.map((item) => <option key={item.codigo} value={item.codigo}>{item.nombre}</option>)}</select></label>
             <button type="button" onClick={() => setRefreshCounter((value) => value + 1)} disabled={apiStatus === 'loading' || !estadoBancario} className="self-end rounded-lg bg-[#3fc58b] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2eae76] disabled:cursor-not-allowed disabled:opacity-60">{apiStatus === 'loading' ? 'Actualizando…' : 'Actualizar'}</button>
           </div>
@@ -338,16 +399,17 @@ export default function Home() {
             <div className="overflow-x-auto"><table className="w-full min-w-[1200px] border-collapse text-sm"><thead><tr className="bg-[#f0effa] text-left text-[11px] uppercase tracking-wider text-[#49505b]"><th className="w-12 border-b border-[#dcdffc] px-5 py-3"><input type="checkbox" aria-label="Seleccionar todos los registros visibles" checked={filteredRows.length > 0 && filteredRows.every((row) => selectedRows.has(rows.indexOf(row)))} onChange={toggleVisibleRows} className="h-4 w-4 accent-[#3985ff]"/></th>{columns.map((column) => <th key={column} className={`border-b border-[#dcdffc] px-5 py-3 font-semibold ${column === 'Importe' ? 'text-right' : ''}`}>{column}</th>)}<th className="border-b border-[#dcdffc] px-5 py-3 font-semibold">Situación</th><th className="border-b border-[#dcdffc] px-5 py-3 font-semibold">DOCUMENTOFISICOID</th><th className="border-b border-[#dcdffc] px-5 py-3 font-semibold">Cuenta</th><th className="border-b border-[#dcdffc] px-5 py-3 font-semibold">Banco / documento</th></tr></thead><tbody>{filteredRows.map((row) => { const originalIndex = rows.indexOf(row); const result = matchResults.find((item) => item.index === originalIndex); return <tr key={`${String(row.Referencia)}-${originalIndex}`} className={`border-b border-[#eff0f1] last:border-0 hover:bg-[#eef5ff] ${selectedRows.has(originalIndex) ? 'bg-[#eef5ff]' : ''}`}><td className="px-5 py-3.5"><input type="checkbox" aria-label={`Seleccionar referencia ${String(row.Referencia)}`} checked={selectedRows.has(originalIndex)} onChange={() => toggleRow(originalIndex)} className="h-4 w-4 accent-[#3985ff]"/></td>{columns.map((column) => <td key={column} className={`whitespace-nowrap px-5 py-3.5 ${column === 'Importe' ? 'text-right font-medium tabular-nums text-[#1529a0]' : column === 'Referencia' ? 'font-mono text-xs text-[#0847ae]' : 'text-[#49505b]'}`}>{displayValue(row[column], column)}</td>)}<td className="whitespace-nowrap px-5 py-3.5">{matching ? <span className="text-xs text-[#898e95]">Comparando…</span> : result?.matched ? <span className="rounded-full bg-[#ebfcf7] px-2.5 py-1 text-xs font-semibold text-[#006b33]">Coincide · {String(result.cheque?.estado ?? 'Emitido')}</span> : <span className="rounded-full bg-[#feeff0] px-2.5 py-1 text-xs font-semibold text-[#a83c34]">No encontrado</span>}</td><td className="whitespace-nowrap px-5 py-3.5 font-mono text-xs text-[#0847ae]">{result?.cheque ? String(result.cheque.documentoFisicoId ?? '—') : '—'}</td><td className="whitespace-nowrap px-5 py-3.5 text-xs font-medium text-[#04102d]">{result?.cheque ? accountDisplayName(cuentasDestino, result.cheque.cuentaCodigo ?? result.cheque.cuenta) : '—'}</td><td className="px-5 py-3.5 text-xs text-[#49505b]">{result?.cheque ? <><p className="font-semibold">{String(result.cheque.banco ?? '—')}</p><p className="mt-0.5 text-[#898e95]">{String(result.cheque.documento ?? '—')}</p></> : '—'}</td></tr>; })}</tbody></table>{!filteredRows.length && <div className="px-6 py-14 text-center text-sm text-[#898e95]">No hay registros que coincidan con la búsqueda.</div>}</div>
             <div className="flex flex-col border-t border-[#e1e2e4] bg-[#f8f8f9] px-5 py-5">
               <div className="mb-4"><h3 className="font-semibold text-[#04102d]">Crear movimiento bancario</h3><p className="mt-1 text-xs text-[#898e95]">Se aplicará a los {selectedRows.size} registros seleccionados.</p></div>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[.65fr_1fr_1fr_auto] xl:items-end">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[.65fr_.8fr_1fr_1fr_auto] xl:items-end">
                 <label className="block"><span className="mb-1.5 block text-xs font-semibold text-[#49505b]">Tipo de documento</span><input type="text" value={tipoDocumento} onChange={(event) => setTipoDocumento(event.target.value.toUpperCase())} className="w-full rounded-lg border border-[#cdcfd2] bg-white px-3 py-2.5 font-mono text-sm text-[#04102d] outline-none transition focus:border-[#3985ff] focus:ring-2 focus:ring-[#3985ff]/15"/></label>
+                <label className="block"><span className="mb-1.5 block text-xs font-semibold text-[#49505b]">Fecha de contabilización</span><input type="date" value={fechaContabilizacion} onChange={(event) => setFechaContabilizacion(event.target.value)} className="w-full rounded-lg border border-[#cdcfd2] bg-white px-3 py-2.5 text-sm text-[#04102d] outline-none transition focus:border-[#3985ff] focus:ring-2 focus:ring-[#3985ff]/15"/></label>
                 <label className="block"><span className="mb-1.5 block text-xs font-semibold text-[#49505b]">Operación bancaria</span><select value={operacionBancaria} onChange={(event) => setOperacionBancaria(event.target.value)} disabled={!operacionesBancarias.length} className="w-full rounded-lg border border-[#cdcfd2] bg-white px-3 py-2.5 text-sm text-[#04102d] outline-none transition focus:border-[#3985ff] focus:ring-2 focus:ring-[#3985ff]/15 disabled:bg-[#f0f1f2] disabled:text-[#898e95]">{operacionesBancarias.length ? operacionesBancarias.map((operacion) => <option key={operacion.codigo} value={operacion.codigo}>{operacion.nombre}</option>) : <option>Cargando operaciones…</option>}</select></label>
-                <label className="block"><span className="mb-1.5 block text-xs font-semibold text-[#49505b]">Cuenta destino</span><select value={cuentaDestino} onChange={(event) => setCuentaDestino(event.target.value)} disabled={!cuentasDestino.length} className="w-full rounded-lg border border-[#cdcfd2] bg-white px-3 py-2.5 text-sm text-[#04102d] outline-none transition focus:border-[#3985ff] focus:ring-2 focus:ring-[#3985ff]/15 disabled:bg-[#f0f1f2] disabled:text-[#898e95]">{cuentasDestino.length ? cuentasDestino.map((cuenta) => <option key={cuenta.codigo} value={cuenta.codigo}>{cuenta.codigo} — {cuenta.nombre}</option>) : <option>Cargando cuentas…</option>}</select></label>
+                <div ref={cuentaDestinoRef} className="relative block"><span className="mb-1.5 block text-xs font-semibold text-[#49505b]">Cuenta destino</span><div className="relative"><input type="text" role="combobox" aria-expanded={cuentaDestinoAbierta} aria-controls="cuentas-destino-lista" aria-autocomplete="list" value={cuentaDestinoBusqueda} placeholder="Buscar cuenta destino" disabled={!cuentasDestino.length} onFocus={() => setCuentaDestinoAbierta(true)} onChange={(event) => { setCuentaDestinoBusqueda(event.target.value); setCuentaDestino(''); setCuentaDestinoAbierta(true); }} className="w-full rounded-lg border border-[#cdcfd2] bg-white py-2.5 pl-3 pr-9 text-sm text-[#04102d] outline-none transition focus:border-[#3985ff] focus:ring-2 focus:ring-[#3985ff]/15 disabled:bg-[#f0f1f2] disabled:text-[#898e95]"/><button type="button" tabIndex={-1} aria-label="Abrir lista de cuentas destino" disabled={!cuentasDestino.length} onMouseDown={(event) => event.preventDefault()} onClick={() => setCuentaDestinoAbierta((value) => !value)} className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-[#747b84] disabled:opacity-40">⌄</button></div>{cuentaDestinoAbierta && <div id="cuentas-destino-lista" role="listbox" style={{ bottom: '100%', maxHeight: '20rem', overflowY: 'auto', overscrollBehavior: 'contain', zIndex: 100 }} className="absolute mb-1 w-full rounded-lg border border-[#cdcfd2] bg-white py-1 shadow-lg">{cuentasDestinoFiltradas.map((cuenta) => <button key={cuenta.codigo} type="button" role="option" aria-selected={cuenta.codigo === cuentaDestino} onClick={() => { setCuentaDestino(cuenta.codigo); setCuentaDestinoBusqueda(`${cuenta.codigo} — ${cuenta.nombre}`); setCuentaDestinoAbierta(false); }} className={`block w-full px-3 py-2 text-left text-sm hover:bg-[#eef5ff] ${cuenta.codigo === cuentaDestino ? 'bg-[#eef5ff] font-semibold text-[#0847ae]' : 'text-[#04102d]'}`}><span className="font-mono text-xs text-[#0847ae]">{cuenta.codigo}</span><span> — {cuenta.nombre}</span></button>)}{!cuentasDestinoFiltradas.length && <p className="px-3 py-3 text-sm text-[#898e95]">No se encontraron cuentas.</p>}</div>}</div>
                 <button type="button" onClick={() => void createMovementPreview()} disabled={movementLoading} className="rounded-lg bg-[#3fc58b] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2eae76] disabled:cursor-wait disabled:opacity-60">{movementLoading ? 'Consultando operación…' : 'Crear movimiento'}</button>
               </div>
-              {movementJson != null && <div className="order-1 mt-4 overflow-hidden rounded-xl border border-[#dcdffc] bg-[#04102d]"><div className="border-b border-white/10 px-4 py-3 text-sm font-semibold text-white">JSON que se enviará a Finnegans</div><pre className="max-h-96 overflow-auto p-4 text-xs leading-5 text-[#b9e6ff]">{JSON.stringify(movementJson, null, 2)}</pre></div>}
+              {movementJson != null && <div className="order-1 mt-3"><a href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(movementJson, null, 2))}`} download={`movimiento-finnegans-${asientoPreview?.fecha ?? todayInBuenosAires()}.json`} className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#2675df] underline decoration-[#2675df]/40 underline-offset-2 transition hover:text-[#0847ae]" aria-label="Descargar JSON que se enviará a Finnegans"><span aria-hidden="true">↓</span> Descargar JSON para revisión</a></div>}
               {asientoPreview && movementJson != null && <div className="order-2 mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-[#49505b]">Esta acción realizará un POST real en Finnegans.</p><button type="button" onClick={() => void submitMovement()} disabled={movementSending} className="rounded-lg bg-[#3fc58b] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2eae76] disabled:cursor-wait disabled:opacity-60">{movementSending ? 'Enviando a Finnegans…' : 'Confirmar y enviar a Finnegans'}</button></div>}
               {movementSuccess && <div role="status" className="order-3 mt-4 rounded-lg border border-[#b8e8d5] bg-[#ebfcf7] px-4 py-3 text-sm font-semibold text-[#006b33]">{movementSuccess}</div>}
-              {endpointResponse != null && <div className={`order-4 mt-4 overflow-hidden rounded-xl border ${endpointResponseOk ? 'border-[#b8e8d5] bg-[#ebfcf7]' : 'border-[#efc7c3] bg-[#fff5f4]'}`}><div className={`border-b px-4 py-3 text-sm font-semibold ${endpointResponseOk ? 'border-[#b8e8d5] text-[#006b33]' : 'border-[#efc7c3] text-[#a83c34]'}`}>{endpointResponseOk ? 'Respuesta de Finnegans' : 'Error devuelto por el endpoint'}</div><pre className="max-h-80 overflow-auto p-4 text-xs leading-5 text-[#1b2432]">{JSON.stringify(endpointResponse, null, 2)}</pre></div>}
+              {endpointResponse != null && <details className={`order-4 mt-4 rounded-lg border px-4 py-3 ${endpointResponseOk ? 'border-[#b8e8d5] bg-[#ebfcf7]' : 'border-[#efc7c3] bg-[#fff5f4]'}`}><summary className={`cursor-pointer text-xs font-semibold underline decoration-current/40 underline-offset-2 ${endpointResponseOk ? 'text-[#006b33]' : 'text-[#a83c34]'}`}>{endpointResponseOk ? 'Ver respuesta de Finnegans' : 'Ver error devuelto por Finnegans'}</summary><pre className="mt-3 max-h-80 overflow-auto border-t border-current/10 pt-3 text-xs leading-5 text-[#1b2432]">{JSON.stringify(endpointResponse, null, 2)}</pre></details>}
               {movementMessage && <div role="alert" className="mt-4 rounded-lg border border-[#efc7c3] bg-[#fff5f4] px-4 py-3 text-sm text-[#a83c34]">{movementMessage}</div>}
               {asientoPreview && <div className="mt-5 overflow-hidden rounded-xl border border-[#dcdffc] bg-white"><div className="border-b border-[#dcdffc] bg-[#f0effa] px-4 py-3"><p className="text-sm font-semibold text-[#04102d]">Vista previa · MovimientoFondo</p><p className="mt-1 text-xs text-[#49505b]">{asientoPreview.operacion} · {asientoPreview.estadoOrigen} → {asientoPreview.estadoDestino}</p></div><div className="overflow-x-auto"><table className="w-full min-w-[820px] text-sm"><thead><tr className="border-b border-[#e1e2e4] text-left text-[11px] uppercase tracking-wider text-[#898e95]"><th className="px-4 py-3">documentofisicoID</th><th className="px-4 py-3">Referencia</th><th className="px-4 py-3">Cuenta</th><th className="px-4 py-3">Debe</th><th className="px-4 py-3">Haber</th><th className="px-4 py-3">Estado destino</th></tr></thead><tbody>{asientoPreview.documentos.flatMap((item) => [<tr key={`${item.documentoFisicoId}-origen`} className="border-b border-[#eff0f1]"><td className="px-4 py-3 font-mono text-xs">{item.documentoFisicoId}</td><td className="px-4 py-3">{item.referencia}</td><td className="px-4 py-3">{accountDisplayName(cuentasDestino, item.cuentaOrigen)}</td><td className="px-4 py-3 text-right">—</td><td className="px-4 py-3 text-right font-medium">{formatMoney(item.importe)}</td><td className="px-4 py-3">{asientoPreview.estadoOrigen}</td></tr>, <tr key={`${item.documentoFisicoId}-destino`} className="border-b border-[#eff0f1] bg-[#fbfcff]"><td className="px-4 py-3 font-mono text-xs">{item.documentoFisicoId}</td><td className="px-4 py-3">{item.referencia}</td><td className="px-4 py-3">{accountDisplayName(cuentasDestino, asientoPreview.cuentaDestinoId)}</td><td className="px-4 py-3 text-right font-medium">{formatMoney(item.importe)}</td><td className="px-4 py-3 text-right">—</td><td className="px-4 py-3 font-medium text-[#006b33]">{asientoPreview.estadoDestino}</td></tr>])}</tbody></table></div></div>}
             </div>
