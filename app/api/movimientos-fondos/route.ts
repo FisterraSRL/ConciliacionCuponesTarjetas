@@ -97,13 +97,13 @@ export async function POST(request: NextRequest) {
     }
     const asientoItems = documents.flatMap((item) => [
       {
-        Descripcion: item.referencia, OperacionBancariaID: operacionId, Control1: 1, DebeHaber: 1,
+        Descripcion: item.referencia, OperacionBancariaID: operacionId, Control1: 1, DebeHaber: -1,
         CuentaID: item.cuentaOrigen, ImporteMonTransaccion: item.importe, ImporteMonPrincipal: item.importe,
         DocumentoFisicoID: item.documentoFisicoId, MonedaIDTransaccion: 'PES', FechaVto: item.fechaVencimiento,
         EstadoIDDocumentoFisico: null, CotizacionMonTransaccion: 1,
       },
       {
-        Descripcion: item.referencia, OperacionBancariaID: operacionId, Control1: 0, DebeHaber: -1,
+        Descripcion: item.referencia, OperacionBancariaID: operacionId, Control1: 0, DebeHaber: 1,
         CuentaID: cuentaDestinoId, ImporteMonTransaccion: item.importe, ImporteMonPrincipal: item.importe,
         DocumentoFisicoID: item.documentoFisicoId, MonedaIDTransaccion: 'PES', FechaVto: item.fechaVencimiento,
         EstadoIDDocumentoFisico: estadoDestino, CotizacionMonTransaccion: 1,

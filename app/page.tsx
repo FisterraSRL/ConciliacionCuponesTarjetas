@@ -34,6 +34,11 @@ function displayValue(value: Cell, column: string) {
   return String(value);
 }
 
+function isCreatedResponse(result: unknown) {
+  const values = result && typeof result === 'object' ? Object.values(result) : [result];
+  return values.some((value) => typeof value === 'string' && /^\W*created?\W*$/i.test(value));
+}
+
 function accountNameKey(value: unknown) {
   return String(value ?? '')
     .replace(/\s*\([^)]*\)\s*$/, '')
@@ -87,6 +92,8 @@ export default function Home() {
   const [asientoPreview, setAsientoPreview] = useState<AsientoPreview | null>(null);
   const [movementLoading, setMovementLoading] = useState(false);
   const [movementSending, setMovementSending] = useState(false);
+  const [confirmingSend, setConfirmingSend] = useState(false);
+  const [importNotice, setImportNotice] = useState('');
   const [movementSuccess, setMovementSuccess] = useState('');
   const [movementJson, setMovementJson] = useState<unknown>(null);
   const [endpointResponse, setEndpointResponse] = useState<unknown>(null);
@@ -99,6 +106,13 @@ export default function Home() {
     document.addEventListener('pointerdown', closeDestinationAccounts);
     return () => document.removeEventListener('pointerdown', closeDestinationAccounts);
   }, []);
+
+  useEffect(() => {
+    if (!importNotice) return;
+    function closeOnEscape(event: KeyboardEvent) { if (event.key === 'Escape') setImportNotice(''); }
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [importNotice]);
 
   useEffect(() => {
     const destinationBySource: Record<string, string> = {
@@ -215,7 +229,7 @@ export default function Home() {
   async function importFile(file?: File) {
     if (!file) return;
     if (!/\.(xls|xlsx)$/i.test(file.name)) { setError('El archivo debe tener formato .xls o .xlsx.'); return; }
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setImportNotice('');
     try {
       const XLSX = await import('xlsx');
       const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
@@ -236,6 +250,14 @@ export default function Home() {
   function onChange(event: ChangeEvent<HTMLInputElement>) { void importFile(event.target.files?.[0]); event.target.value = ''; }
   function onDrop(event: DragEvent<HTMLDivElement>) { event.preventDefault(); setDragging(false); void importFile(event.dataTransfer.files?.[0]); }
   function clearImport() { setRows([]); setColumns([]); setFileName(''); setSheetName(''); setQuery(''); setError(''); setMatchResults([]); setSelectedRows(new Set()); }
+  function resetAfterMovementCreated(notice: string) {
+    clearImport();
+    setAsientoPreview(null); setMovementJson(null); setMovementMessage(''); setMovementSuccess('');
+    setEndpointResponse(null); setEndpointResponseOk(null); setConfirmingSend(false);
+    setImportNotice(notice);
+    // Los cupones cambiaron de estado en Finnegans: refrescar para no volver a conciliarlos con datos en caché.
+    setRefreshCounter((value) => value + 1);
+  }
 
   function toggleRow(index: number) {
     setSelectedRows((current) => {
@@ -262,6 +284,7 @@ export default function Home() {
     setEndpointResponse(null);
     setEndpointResponseOk(null);
     setAsientoPreview(null);
+    setConfirmingSend(false);
     if (!selectedRows.size) { setMovementMessage('No hay registros seleccionados.'); return; }
     const selectedMatches = matchResults.filter((item) => selectedRows.has(item.index) && item.matched && item.cheque);
     if (selectedMatches.length !== selectedRows.size) { setMovementMessage('Solo se pueden incluir registros cuya situación sea Coincide.'); return; }
@@ -329,7 +352,7 @@ export default function Home() {
       setMovementMessage('No se pudo recuperar la descripción del Excel. Volvé a crear la vista previa del movimiento.');
       return;
     }
-    if (!window.confirm(`Se creará un movimiento ${asientoPreview.tipoDocumento} con ${asientoPreview.documentos.length} documentos en Finnegans. ¿Confirmar?`)) return;
+    setConfirmingSend(false);
     setMovementSending(true); setMovementMessage(''); setMovementSuccess('');
     setEndpointResponse(null); setEndpointResponseOk(null);
     let receivedResponse = false;
@@ -344,7 +367,11 @@ export default function Home() {
       setEndpointResponseOk(response.ok);
       if (!response.ok) throw new Error(body.error);
       const transactionId = body.result?.TransaccionID ?? body.result?.transaccionID ?? body.result?.id;
-      setMovementSuccess(transactionId ? `Movimiento creado correctamente. Transacción: ${transactionId}.` : 'Movimiento creado correctamente en Finnegans.');
+      if (isCreatedResponse(body.result)) {
+        resetAfterMovementCreated(`Movimiento creado correctamente en Finnegans con ${documents.length} documentos${transactionId ? ` (transacción ${String(transactionId)})` : ''}. Ya podés subir un nuevo archivo.`);
+        return;
+      }
+      setMovementSuccess(transactionId ? `Finnegans aceptó el envío (transacción ${String(transactionId)}), pero no confirmó "create". Revisá la respuesta antes de continuar.` : 'Finnegans aceptó el envío, pero no confirmó "create". Revisá la respuesta antes de continuar.');
     } catch (cause) {
       if (!receivedResponse) { setEndpointResponse({ error: cause instanceof Error ? cause.message : 'Error desconocido.' }); setEndpointResponseOk(false); }
       setMovementMessage(cause instanceof Error ? cause.message : 'No se pudo crear el movimiento en Finnegans.');
@@ -407,7 +434,7 @@ export default function Home() {
                 <button type="button" onClick={() => void createMovementPreview()} disabled={movementLoading} className="rounded-lg bg-[#3fc58b] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2eae76] disabled:cursor-wait disabled:opacity-60">{movementLoading ? 'Consultando operación…' : 'Crear movimiento'}</button>
               </div>
               {movementJson != null && <div className="order-1 mt-3"><a href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(movementJson, null, 2))}`} download={`movimiento-finnegans-${asientoPreview?.fecha ?? todayInBuenosAires()}.json`} className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#2675df] underline decoration-[#2675df]/40 underline-offset-2 transition hover:text-[#0847ae]" aria-label="Descargar JSON que se enviará a Finnegans"><span aria-hidden="true">↓</span> Descargar JSON para revisión</a></div>}
-              {asientoPreview && movementJson != null && <div className="order-2 mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-[#49505b]">Esta acción realizará un POST real en Finnegans.</p><button type="button" onClick={() => void submitMovement()} disabled={movementSending} className="rounded-lg bg-[#3fc58b] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2eae76] disabled:cursor-wait disabled:opacity-60">{movementSending ? 'Enviando a Finnegans…' : 'Confirmar y enviar a Finnegans'}</button></div>}
+              {asientoPreview && movementJson != null && <div className="order-2 mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">{confirmingSend ? <><p className="text-xs font-semibold text-[#a83c34]">Se creará un movimiento {asientoPreview.tipoDocumento} con {asientoPreview.documentos.length} documentos en Finnegans. ¿Confirmar?</p><div className="flex gap-2"><button type="button" onClick={() => setConfirmingSend(false)} className="rounded-lg border border-[#cdcfd2] bg-white px-5 py-2.5 text-sm font-semibold text-[#49505b] transition hover:bg-[#eef5ff]">Cancelar</button><button type="button" onClick={() => void submitMovement()} className="rounded-lg bg-[#3fc58b] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2eae76]">Sí, enviar</button></div></> : <><p className="text-xs text-[#49505b]">Esta acción realizará un POST real en Finnegans.</p><button type="button" onClick={() => setConfirmingSend(true)} disabled={movementSending} className="rounded-lg bg-[#3fc58b] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2eae76] disabled:cursor-wait disabled:opacity-60">{movementSending ? 'Enviando a Finnegans…' : 'Confirmar y enviar a Finnegans'}</button></>}</div>}
               {movementSuccess && <div role="status" className="order-3 mt-4 rounded-lg border border-[#b8e8d5] bg-[#ebfcf7] px-4 py-3 text-sm font-semibold text-[#006b33]">{movementSuccess}</div>}
               {endpointResponse != null && <details className={`order-4 mt-4 rounded-lg border px-4 py-3 ${endpointResponseOk ? 'border-[#b8e8d5] bg-[#ebfcf7]' : 'border-[#efc7c3] bg-[#fff5f4]'}`}><summary className={`cursor-pointer text-xs font-semibold underline decoration-current/40 underline-offset-2 ${endpointResponseOk ? 'text-[#006b33]' : 'text-[#a83c34]'}`}>{endpointResponseOk ? 'Ver respuesta de Finnegans' : 'Ver error devuelto por Finnegans'}</summary><pre className="mt-3 max-h-80 overflow-auto border-t border-current/10 pt-3 text-xs leading-5 text-[#1b2432]">{JSON.stringify(endpointResponse, null, 2)}</pre></details>}
               {movementMessage && <div role="alert" className="mt-4 rounded-lg border border-[#efc7c3] bg-[#fff5f4] px-4 py-3 text-sm text-[#a83c34]">{movementMessage}</div>}
@@ -416,6 +443,14 @@ export default function Home() {
           </section>
         </>}
       </div>
+      {importNotice && <div className="fixed inset-0 z-[200] grid place-items-center bg-[#04102d]/40 p-4" onClick={() => setImportNotice('')}>
+        <div role="dialog" aria-modal="true" aria-labelledby="movimiento-creado-titulo" aria-describedby="movimiento-creado-detalle" onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-6 text-center shadow-[0_24px_60px_rgba(4,16,45,.25)]">
+          <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-[#ebfcf7] text-2xl font-bold text-[#169568]" aria-hidden="true">✓</div>
+          <h3 id="movimiento-creado-titulo" className="text-lg font-semibold text-[#04102d]">Movimiento creado</h3>
+          <p id="movimiento-creado-detalle" className="mt-2 text-sm leading-6 text-[#49505b]">{importNotice}</p>
+          <button type="button" autoFocus onClick={() => setImportNotice('')} className="mt-6 w-full rounded-lg bg-[#3fc58b] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2eae76]">Aceptar</button>
+        </div>
+      </div>}
     </main>
   );
 }
